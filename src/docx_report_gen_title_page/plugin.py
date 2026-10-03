@@ -1,210 +1,187 @@
-"""TitlePagePlugin — inserts a standardized title page into a Report.
+"""TitlePagePlugin — adds title-page methods to a Report.
 
-The plugin runs in its `setup(report)` hook, which fires during
-Report.__init__, before any user content. It writes the title page
-using python-docx primitives with explicit formatting, and closes the
-page with a page break so subsequent content starts on page 2.
+The plugin registers two block methods on every Report it is attached
+to:
 
-All content comes from a TitlePageConfig. Missing fields are skipped
-without rendering an empty line — labels and section headers are only
-rendered together with their value, so a minimal config still
-produces a coherent page.
+    report.title_page(config=None, **kwargs)
+        Build a title page from fields. Accepts either a fully
+        constructed TitlePageConfig or keyword fields.
+
+    report.load_title_page(source, page_break=None)
+        Load an existing .docx file and append its content as-is,
+        preserving styles, sizes and spacing. Missing style
+        definitions are copied from the source; existing style IDs
+        in the target are kept as-is.
+
+Both methods return the report, so they chain with other block
+methods.
+
+Auto-render in setup():
+    If the plugin is constructed with `config=`, `source=`, or content
+    keyword fields, the page is rendered immediately in `setup()` —
+    before any user content. Constructing with no arguments registers
+    the methods and waits for an explicit call.
 """
-from typing import Any, Optional
-
-from docx.document import Document as DocxDocument
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt
+from pathlib import Path
+from typing import Any, Optional, Union
 
 from docx_report_gen import Plugin, Report
 
+from ._render import render_config
 from .config import TitlePageConfig
+from .loader import load_docx_content
+
+
+PathLike = Union[str, Path]
 
 
 class TitlePagePlugin(Plugin):
-    """Renders a title page as the first element of a Report.
+    """Adds title_page() and load_title_page() methods to Report.
 
-    Example:
-        from docx_report_gen import Report
-        from docx_report_gen_title_page import TitlePagePlugin
+    Explicit usage:
+
+        r = Report(plugins=[TitlePagePlugin()])
+        r.title_page(
+            institution='СПбПУ',
+            work_title='«...»',
+            student='студент гр. ... Ерохин В.С.',
+            supervisor='Тутыгин В.С.',
+            city='Санкт-Петербург',
+            year=2026,
+        )
+        r.h1('Введение')
+
+    Or:
+
+        r.load_title_page('Титульный лист.docx')
+
+    Auto-render:
 
         r = Report(plugins=[
-            TitlePagePlugin(
-                institution='Санкт-Петербургский политехнический '
-                            'университет Петра Великого',
-                institute='Институт компьютерных наук и технологий',
-                school='Высшая школа программной инженерии',
-                work_type='ЛАБОРАТОРНАЯ РАБОТА',
-                work_number='№2',
-                work_title='«Разложение дискретизированных сигналов '
-                           'в действительный и комплексный ряд Фурье»',
-                discipline='«Применение методов искусственного '
-                           'интеллекта для цифровой обработки сигналов»',
-                student='студент гр. 5130904/30103 Ерохин В.С.',
-                supervisor='Тутыгин В.С.',
-                city='Санкт-Петербург',
-                year=2026,
-            ),
+            TitlePagePlugin(institution='СПбПУ', year=2026),
         ])
-        r.h1('Introduction')
-        r.save('report.docx')
+        # Title page is already on the first sheet.
     """
 
     name = 'title-page'
 
     def __init__(
-        self,
-        config: Optional[TitlePageConfig] = None,
-        **kwargs: Any,
+            self,
+            config: Optional[TitlePageConfig] = None,
+            source: Optional[PathLike] = None,
+            page_break: bool = True,
+            **kwargs: Any,
     ) -> None:
         """Initialize the plugin.
 
         Args:
-            config: a fully constructed TitlePageConfig. If given,
-                **kwargs must be empty.
-            **kwargs: fields for TitlePageConfig, used when `config` is
-                None. Passing both is an error.
+            config: a fully constructed TitlePageConfig for auto-render.
+            source: path to an existing .docx title page for auto-render.
+                Mutually exclusive with `config` and content kwargs.
+            page_break: default for the page break after the title page.
+                Used by auto-render and by both methods when they are
+                called without an explicit override.
+            **kwargs: fields for TitlePageConfig, used when `config`
+                and `source` are both absent.
 
         Raises:
-            ValueError: both `config` and keyword fields were provided.
-            TypeError: an unknown keyword field was passed.
+            ValueError: config and kwargs were both given; or source
+                and (config or kwargs) were both given.
+            FileNotFoundError: source path does not exist.
+            TypeError: an unknown content keyword was passed.
         """
         super().__init__()
+
         if config is not None and kwargs:
             raise ValueError(
                 'Pass either config=... or **kwargs, not both'
             )
-        self.config = config if config is not None else TitlePageConfig(**kwargs)
+
+        if source is not None and (config is not None or kwargs):
+            raise ValueError(
+                'Pass either source=..., or config=.../**kwargs, not both'
+            )
+
+        self.page_break = page_break
+        self._initial_source: Optional[Path] = None
+        self._initial_config: Optional[TitlePageConfig] = None
+
+        if source is not None:
+            path = Path(source)
+            if not path.exists():
+                raise FileNotFoundError(
+                    f'TitlePagePlugin(): source not found: {path}'
+                )
+            self._initial_source = path
+        elif config is not None or kwargs:
+            self._initial_config = (
+                config if config is not None else TitlePageConfig(**kwargs)
+            )
 
     # ---------- Plugin hook ----------
 
     def setup(self, report: Report) -> None:
-        """Insert the title page into a freshly created Report.
+        """Register block methods; auto-render if configured."""
+        # Plugin.setup() receives a report with a registry attached;
+        # registry is Optional on Plugin only to allow a plugin to be
+        # constructed without one. Here it is always set.
+        registry = self.registry
+        assert registry is not None, 'registry must be set during setup'
 
-        Uses only the public API of Report: python-docx's own
-        Document.add_page_break is not typed, so it is reached through
-        Report.page_break() instead. This also keeps the plugin free
-        of direct python-docx coupling beyond paragraph formatting.
-        """
-        self._render(report.doc)
-        report.page_break()
+        registry.block('title_page', self._title_page_handler)
+        registry.block('load_title_page', self._load_title_page_handler)
 
-    # ---------- rendering ----------
-
-    def _render(self, doc: DocxDocument) -> None:
-        cfg = self.config
-
-        # ---------- header block ----------
-        self._add_line(doc, cfg.institution, cfg.institution_size)
-        self._add_line(doc, cfg.institute, cfg.institution_size)
-        self._add_line(doc, cfg.school, cfg.institution_size, bold=True)
-
-        self._blank(doc, 2)
-
-        # ---------- main block ----------
-        work_line = self._join(cfg.work_type, cfg.work_number, sep=' ')
-        self._add_line(doc, work_line, cfg.title_size, bold=True)
-
-        self._blank(doc, 1)
-
-        self._add_line(doc, cfg.work_title, cfg.title_size, bold=True)
-
-        self._blank(doc, 1)
-
-        # Discipline prefix is a label — render only with the discipline.
-        if cfg.discipline:
-            self._add_line(doc, cfg.discipline_prefix, cfg.base_size)
-
-            self._blank(doc, 1)
-
-            self._add_line(doc, cfg.discipline, cfg.base_size)
-
-        self._blank(doc, 4)
-
-        # ---------- signature block ----------
-        if cfg.student:
-            self._add_line(
-                doc, cfg.student_label, cfg.base_size, right=True,
+        if self._initial_source is not None:
+            self._load_title_page_handler(
+                report, self._initial_source, page_break=True,
             )
-            self._blank(doc, 1)
-            self._add_line(doc, cfg.student, cfg.base_size, right=True)
+        elif self._initial_config is not None:
+            self._title_page_handler(report, self._initial_config)
 
-        if cfg.supervisor:
-            supervisor_line = self._join(
-                cfg.supervisor_label, cfg.supervisor, sep=' ',
-            )
-            self._blank(doc, 1)
-            self._add_line(
-                doc, supervisor_line, cfg.base_size, right=True,
-            )
+    # ---------- block method handlers ----------
 
-        # ---------- bottom block ----------
-        if cfg.city or cfg.year is not None:
-            self._blank(doc, cfg.bottom_gap_lines)
-            self._add_line(doc, cfg.city, cfg.base_size)
-            self._add_line(
-                doc,
-                str(cfg.year) if cfg.year is not None else None,
-                cfg.base_size,
-            )
-
-    # ---------- helpers ----------
-
-    def _add_line(
+    def _title_page_handler(
         self,
-        doc: DocxDocument,
-        text: Optional[str],
-        size: int,
+        report: Report,
+        config: Optional[TitlePageConfig] = None,
         *,
-        bold: bool = False,
-        right: bool = False,
-    ) -> None:
-        """Add a centered or right-aligned line.
+        page_break: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> Report:
+        """Handler for Report.title_page(...).
 
-        Empty and None text is skipped without producing a paragraph.
+        Returns the report so calls can chain.
         """
-        if not text:
-            return
-
-        para = doc.add_paragraph()
-        para.alignment = (
-            WD_ALIGN_PARAGRAPH.RIGHT if right
-            else WD_ALIGN_PARAGRAPH.CENTER
+        if config is not None and kwargs:
+            raise ValueError(
+                'title_page(): pass either a config object or keyword '
+                'fields, not both'
+            )
+        cfg = (
+            config if config is not None
+            else TitlePageConfig(**kwargs)
         )
-        pf = para.paragraph_format
-        pf.space_before = Pt(0)
-        pf.space_after = Pt(0)
-        pf.line_spacing = self.config.line_spacing
 
-        run = para.add_run(text)
-        run.font.name = self.config.font
-        run.font.size = Pt(size)
-        run.bold = bold
+        render_config(report.doc, cfg)
 
-    def _blank(self, doc: DocxDocument, count: int) -> None:
-        """Add `count` empty paragraphs at base font size.
+        pb = self.page_break if page_break is None else page_break
+        if pb:
+            report.page_break()
+        return report
 
-        Each paragraph carries an empty run with an explicit font size
-        so Word computes the paragraph height from the intended size,
-        not from the surrounding style.
+    def _load_title_page_handler(
+        self,
+        report: Report,
+        source: PathLike,
+        page_break: Optional[bool] = None,
+    ) -> Report:
+        """Handler for Report.load_title_page(...).
+
+        Returns the report so calls can chain.
         """
-        for _ in range(count):
-            para = doc.add_paragraph()
-            pf = para.paragraph_format
-            pf.space_before = Pt(0)
-            pf.space_after = Pt(0)
-            pf.line_spacing = self.config.line_spacing
-            run = para.add_run('')
-            run.font.size = Pt(self.config.base_size)
+        load_docx_content(source, report.doc)
 
-    @staticmethod
-    def _join(
-        left: Optional[str],
-        right: Optional[str],
-        *,
-        sep: str = ' ',
-    ) -> Optional[str]:
-        """Join two optional strings, skipping missing parts."""
-        if left and right:
-            return f'{left}{sep}{right}'
-        return left or right or None
+        pb = self.page_break if page_break is None else page_break
+        if pb:
+            report.page_break()
+        return report

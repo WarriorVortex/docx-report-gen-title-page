@@ -68,7 +68,6 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.9"
 strict = true
 mypy_path = "src"
 files = ["src/docx_report_gen_title_page"]

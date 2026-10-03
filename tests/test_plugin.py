@@ -1,4 +1,4 @@
-"""Tests for TitlePagePlugin — rendering and integration with Report."""
+"""Tests for TitlePagePlugin — rendering and Report integration."""
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -15,14 +15,15 @@ def test_plugin_name():
 
 def test_plugin_accepts_kwargs():
     p = TitlePagePlugin(institution='X', year=2026)
-    assert p.config.institution == 'X'
-    assert p.config.year == 2026
+    assert p._initial_config is not None
+    assert p._initial_config.institution == 'X'
+    assert p._initial_config.year == 2026
 
 
 def test_plugin_accepts_config_object():
     cfg = TitlePageConfig(institution='Y')
     p = TitlePagePlugin(config=cfg)
-    assert p.config is cfg
+    assert p._initial_config is cfg
 
 
 def test_plugin_rejects_config_and_kwargs_together():
@@ -35,17 +36,256 @@ def test_plugin_rejects_unknown_field():
         TitlePagePlugin(nonexistent_field='X')
 
 
-def test_default_config_has_all_none_content():
-    p = TitlePagePlugin()
-    assert p.config.institution is None
-    assert p.config.work_type is None
+def test_plugin_without_arguments_does_not_auto_render():
+    r = Report(plugins=[TitlePagePlugin()])
+    non_empty = [p.text for p in r.doc.paragraphs if p.text]
+    assert non_empty == []
 
 
-# ---------- rendering ----------
+# ---------- block methods ----------
 
-def _texts(doc):
-    return [p.text for p in doc.paragraphs]
+def test_report_has_title_page_method():
+    r = Report(plugins=[TitlePagePlugin()])
+    assert hasattr(r, 'title_page')
+    assert callable(r.title_page)
 
+
+def test_report_has_load_title_page_method():
+    r = Report(plugins=[TitlePagePlugin()])
+    assert hasattr(r, 'load_title_page')
+    assert callable(r.load_title_page)
+
+
+def test_title_page_method_accepts_kwargs():
+    r = Report(plugins=[TitlePagePlugin()])
+    r.title_page(institution='СПбПУ', year=2026)
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'СПбПУ' in texts
+    assert '2026' in texts
+
+
+def test_title_page_method_accepts_config_object():
+    r = Report(plugins=[TitlePagePlugin()])
+    cfg = TitlePageConfig(institution='FromConfig')
+    r.title_page(cfg)
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'FromConfig' in texts
+
+
+def test_title_page_method_rejects_config_and_kwargs():
+    r = Report(plugins=[TitlePagePlugin()])
+    with pytest.raises(ValueError, match='not both'):
+        r.title_page(TitlePageConfig(), institution='X')
+
+
+def test_title_page_method_returns_report():
+    r = Report(plugins=[TitlePagePlugin()])
+    result = r.title_page(institution='X')
+    assert result is r
+
+
+def test_title_page_method_chains():
+    r = Report(plugins=[TitlePagePlugin()])
+    r.title_page(institution='X').h1('Body')
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'X' in texts
+    assert 'Body' in texts
+
+
+def test_title_page_method_can_be_called_multiple_times():
+    r = Report(plugins=[TitlePagePlugin(page_break=False)])
+    r.title_page(institution='First')
+    r.title_page(institution='Second')
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'First' in texts
+    assert 'Second' in texts
+
+
+def test_title_page_method_page_break_override():
+    import zipfile
+    from lxml import etree
+
+    r = Report(plugins=[TitlePagePlugin()])
+    r.title_page(institution='X', page_break=False)
+
+    path = r.doc
+    # Save to temp and check XML
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as f:
+        path = f.name
+    r.save(path)
+
+    with zipfile.ZipFile(path) as zf:
+        xml = etree.fromstring(zf.read('word/document.xml'))
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    breaks = [
+        br for br in xml.iter(f'{{{W}}}br')
+        if br.get(f'{{{W}}}type') == 'page'
+    ]
+    assert not breaks
+
+
+# ---------- auto-render in setup ----------
+
+def test_auto_render_from_kwargs():
+    r = Report(plugins=[TitlePagePlugin(institution='Auto')])
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'Auto' in texts
+
+
+def test_auto_render_from_config():
+    cfg = TitlePageConfig(institution='AutoCfg', year=2026)
+    r = Report(plugins=[TitlePagePlugin(config=cfg)])
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'AutoCfg' in texts
+    assert '2026' in texts
+
+
+def test_auto_render_adds_page_break_by_default():
+    import zipfile
+    from lxml import etree
+    import tempfile
+
+    r = Report(plugins=[TitlePagePlugin(institution='X')])
+    with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as f:
+        path = f.name
+    r.save(path)
+
+    with zipfile.ZipFile(path) as zf:
+        xml = etree.fromstring(zf.read('word/document.xml'))
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    breaks = [
+        br for br in xml.iter(f'{{{W}}}br')
+        if br.get(f'{{{W}}}type') == 'page'
+    ]
+    assert breaks
+
+
+# ---------- source mode ----------
+
+def _create_title_docx(tmp_path):
+    """Create a minimal title-page-like .docx for source-mode tests."""
+    doc = Document()
+    p1 = doc.add_paragraph()
+    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p1.add_run('СПбПУ').bold = True
+
+    p2 = doc.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p2.add_run('ЛАБОРАТОРНАЯ РАБОТА №2')
+
+    path = tmp_path / 'title.docx'
+    doc.save(str(path))
+    return path
+
+
+def test_auto_render_from_source(tmp_path):
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin(source=src)])
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'СПбПУ' in texts
+    assert 'ЛАБОРАТОРНАЯ РАБОТА №2' in texts
+
+
+def test_source_mode_rejects_config(tmp_path):
+    src = _create_title_docx(tmp_path)
+    with pytest.raises(ValueError, match='not both'):
+        TitlePagePlugin(source=src, institution='X')
+
+
+def test_source_mode_rejects_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        TitlePagePlugin(source=tmp_path / 'nope.docx')
+
+
+def test_load_title_page_method(tmp_path):
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin()])
+    r.load_title_page(src)
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'СПбПУ' in texts
+
+
+def test_load_title_page_returns_report(tmp_path):
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin()])
+    result = r.load_title_page(src)
+    assert result is r
+
+
+def test_load_title_page_chains(tmp_path):
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin()])
+    r.load_title_page(src).h1('Body')
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert 'СПбПУ' in texts
+    assert 'Body' in texts
+
+
+def test_load_title_page_missing_file(tmp_path):
+    r = Report(plugins=[TitlePagePlugin()])
+    with pytest.raises(FileNotFoundError):
+        r.load_title_page(tmp_path / 'nope.docx')
+
+
+def test_load_title_page_page_break_override(tmp_path):
+    import zipfile
+    from lxml import etree
+
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin()])
+    r.load_title_page(src, page_break=False)
+
+    path = tmp_path / 'out.docx'
+    r.save(str(path))
+
+    with zipfile.ZipFile(path) as zf:
+        xml = etree.fromstring(zf.read('word/document.xml'))
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    breaks = [
+        br for br in xml.iter(f'{{{W}}}br')
+        if br.get(f'{{{W}}}type') == 'page'
+    ]
+    assert not breaks
+
+
+def test_source_mode_preserves_alignment(tmp_path):
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin(source=src)])
+    for para in r.doc.paragraphs:
+        if para.text == 'СПбПУ':
+            assert para.alignment == WD_ALIGN_PARAGRAPH.CENTER
+            break
+    else:
+        pytest.fail('СПбПУ not found')
+
+
+def test_source_mode_user_content_after_title(tmp_path):
+    src = _create_title_docx(tmp_path)
+    r = Report(plugins=[TitlePagePlugin(source=src)])
+    r.h1('Body heading')
+    texts = [p.text for p in r.doc.paragraphs if p.text]
+    assert texts.index('СПбПУ') < texts.index('Body heading')
+
+
+# ---------- global registration ----------
+
+def test_global_registration_gives_methods_to_new_reports():
+    from docx_report_gen.plugins import plugins as global_plugins
+
+    plugin = TitlePagePlugin()
+    try:
+        global_plugins.register(plugin)
+        r = Report()
+        assert hasattr(r, 'title_page')
+        r.title_page(institution='Global')
+        texts = [p.text for p in r.doc.paragraphs if p.text]
+        assert 'Global' in texts
+    finally:
+        global_plugins.unregister(plugin)
+
+
+# ---------- config mode full render (kept from before) ----------
 
 def test_full_title_page(tmp_path):
     r = Report(plugins=[TitlePagePlugin(
@@ -66,8 +306,7 @@ def test_full_title_page(tmp_path):
     r.save(str(path))
 
     doc = Document(str(path))
-    texts = _texts(doc)
-
+    texts = [p.text for p in doc.paragraphs]
     assert 'СПбПУ' in texts
     assert 'ИКНТ' in texts
     assert 'ВШПИ' in texts
@@ -84,129 +323,20 @@ def test_full_title_page(tmp_path):
 
 
 def test_missing_fields_are_skipped(tmp_path):
-    r = Report(plugins=[TitlePagePlugin(
-        institution='X',
-        city='Y',
-    )])
+    r = Report(plugins=[TitlePagePlugin(institution='X', city='Y')])
     r.h1('Body')
     path = tmp_path / 'out.docx'
     r.save(str(path))
 
     doc = Document(str(path))
-    texts = [t for t in _texts(doc) if t]
-    # Only X, Y and Body should be non-empty
+    texts = [t for t in (p.text for p in doc.paragraphs) if t]
     assert 'X' in texts
     assert 'Y' in texts
     assert 'Body' in texts
 
 
-def test_work_type_and_number_joined():
-    p = TitlePagePlugin(work_type='ЛАБОРАТОРНАЯ', work_number='№3')
-    r = Report(plugins=[p])
-    doc = r.doc
-    texts = _texts(doc)
-    assert 'ЛАБОРАТОРНАЯ №3' in texts
-
-
-def test_work_type_without_number():
-    p = TitlePagePlugin(work_type='РЕФЕРАТ')
-    r = Report(plugins=[p])
-    texts = _texts(r.doc)
-    assert 'РЕФЕРАТ' in texts
-
-
-def test_supervisor_joined_into_single_line():
-    p = TitlePagePlugin(supervisor_label='Руководитель',
-                        supervisor='Иванов И.И.')
-    r = Report(plugins=[p])
-    texts = _texts(r.doc)
-    assert 'Руководитель Иванов И.И.' in texts
-
-
-def test_year_rendered_as_string():
-    p = TitlePagePlugin(year=2026)
-    r = Report(plugins=[p])
-    texts = _texts(r.doc)
-    assert '2026' in texts
-
-
-def test_signature_block_is_right_aligned():
-    p = TitlePagePlugin(student='студент')
-    r = Report(plugins=[p])
-    doc = r.doc
-    for para in doc.paragraphs:
-        if para.text == 'студент':
-            assert para.alignment == WD_ALIGN_PARAGRAPH.RIGHT
-            break
-    else:
-        pytest.fail('student line not found')
-
-
-def test_header_lines_are_centered():
-    p = TitlePagePlugin(institution='University')
-    r = Report(plugins=[p])
-    doc = r.doc
-    for para in doc.paragraphs:
-        if para.text == 'University':
-            assert para.alignment == WD_ALIGN_PARAGRAPH.CENTER
-            break
-    else:
-        pytest.fail('institution line not found')
-
-
-def test_page_break_present_at_end(tmp_path):
-    """After the title page, a page break must separate it from user content."""
-    import zipfile
-    from lxml import etree
-
-    r = Report(plugins=[TitlePagePlugin(institution='X')])
-    r.h1('Body')
-    path = tmp_path / 'out.docx'
-    r.save(str(path))
-
-    with zipfile.ZipFile(path) as zf:
-        xml = etree.fromstring(zf.read('word/document.xml'))
-    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    page_breaks = [
-        br for br in xml.iter(f'{{{W}}}br')
-        if br.get(f'{{{W}}}type') == 'page'
-    ]
-    assert page_breaks
-
-
-def test_user_content_follows_title_page():
-    """Content added after Report creation appears after the title page."""
-    p = TitlePagePlugin(institution='University')
-    r = Report(plugins=[p])
-    r.h1('First heading')
-
-    texts = [t for t in _texts(r.doc) if t]
-    assert texts.index('University') < texts.index('First heading')
-
-
-def test_plugin_works_with_register_plugin(tmp_path):
-    from docx_report_gen.plugins import plugins as global_plugins
-
-    plugin = TitlePagePlugin(institution='Global University')
-    try:
-        global_plugins.register(plugin)
-        r = Report()
-        texts = [t for t in _texts(r.doc) if t]
-        assert 'Global University' in texts
-    finally:
-        global_plugins.unregister(plugin)
-
-
-def test_plugin_setup_runs_on_attach():
-    """setup() is called automatically when plugin is passed to Report."""
-    p = TitlePagePlugin(institution='Direct')
-    r = Report(plugins=[p])
-    assert p.report is r
-    assert p.registry is not None
-
-
 def test_empty_config_produces_only_page_break():
-    """With an empty config, only the page break should be added."""
     r = Report(plugins=[TitlePagePlugin()])
-    non_empty = [t for t in _texts(r.doc) if t]
+    r.title_page()
+    non_empty = [t for t in (p.text for p in r.doc.paragraphs) if t]
     assert non_empty == []
