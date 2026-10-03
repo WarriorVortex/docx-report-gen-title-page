@@ -1,8 +1,13 @@
 """Configuration dataclass for the title page plugin.
 
 All content fields are optional. Missing fields are skipped entirely —
-no empty paragraph is inserted in their place. Layout fields have
-sensible defaults that fit a standard A4 page with ~2 cm margins.
+no empty paragraph is inserted in their place.
+
+Layout is computed from relative gap weights. The renderer measures
+the page geometry, estimates how many lines each text field will take,
+and distributes the remaining vertical space among the gaps in
+proportion to their weights. The result is a title page that fits
+exactly one A4 sheet, regardless of margins or font sizes.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -12,7 +17,7 @@ from typing import Optional
 class TitlePageConfig:
     """Content and layout for a Russian academic title page.
 
-    Content sections (each line is optional):
+    Content sections (each field is optional):
         Header block:   institution, institute, school
         Main block:     work_type, work_number, work_title,
                         discipline_prefix, discipline
@@ -20,17 +25,19 @@ class TitlePageConfig:
                         supervisor_label, supervisor
         Bottom block:   city, year
 
-    Layout fields:
-        font            Font family for every paragraph.
-        base_size       Base point size (headers, discipline, signature).
-        title_size      Point size for work type and title.
+    Layout:
+        font             Font family for every paragraph.
+        base_size        Base point size (discipline, signature, bottom).
+        title_size       Point size for work type, number and title.
         institution_size Point size for the header block.
-        line_spacing    Multiplier; 1.5 is the usual academic standard.
-        bottom_gap_lines Number of blank lines between the signature
-                        block and city/year. Controls where the bottom
-                        block lands. The default targets an A4 page
-                        with 2 cm margins so the whole page fits on one
-                        sheet.
+        line_height_pt   Exact line height in points. If None, derived
+                         from the largest font size (×1.4). Must be at
+                         least large enough to avoid clipping.
+        gap_*            Relative weights of the vertical gaps between
+                         blocks. Only the ratios matter; absolute values
+                         are scaled so the page fits exactly. Set a
+                         weight to 0 to eliminate a gap, or raise it to
+                         push blocks further apart.
     """
 
     # ---------- header ----------
@@ -55,10 +62,20 @@ class TitlePageConfig:
     city: Optional[str] = None
     year: Optional[int] = None
 
-    # ---------- layout ----------
+    # ---------- fonts ----------
     font: str = 'Times New Roman'
     base_size: int = 14
     title_size: int = 16
     institution_size: int = 14
-    line_spacing: float = 1.5
-    bottom_gap_lines: int = 6
+    line_height_pt: Optional[int] = None
+
+    # ---------- gap weights ----------
+    # Higher weight = larger gap. Only the ratios matter.
+    gap_after_header: float = 2.0
+    gap_after_work: float = 0.5
+    gap_after_title: float = 0.5
+    gap_after_discipline_prefix: float = 0.3
+    gap_after_discipline: float = 2.0
+    gap_after_student_label: float = 0.3
+    gap_after_student: float = 0.5
+    gap_after_supervisor: float = 3.0

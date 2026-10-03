@@ -24,14 +24,25 @@ def test_localizable_fields_have_defaults():
     assert cfg.supervisor_label == 'Руководитель'
 
 
-def test_layout_defaults():
+def test_font_defaults():
     cfg = TitlePageConfig()
     assert cfg.font == 'Times New Roman'
     assert cfg.base_size == 14
     assert cfg.title_size == 16
     assert cfg.institution_size == 14
-    assert cfg.line_spacing == 1.5
-    assert cfg.bottom_gap_lines == 6
+    assert cfg.line_height_pt is None      # derived from font sizes
+
+
+def test_gap_weight_defaults():
+    cfg = TitlePageConfig()
+    assert cfg.gap_after_header == 2.0
+    assert cfg.gap_after_work == 0.5
+    assert cfg.gap_after_title == 0.5
+    assert cfg.gap_after_discipline_prefix == 0.3
+    assert cfg.gap_after_discipline == 2.0
+    assert cfg.gap_after_student_label == 0.3
+    assert cfg.gap_after_student == 0.5
+    assert cfg.gap_after_supervisor == 3.0
 
 
 def test_explicit_values_are_kept():
@@ -40,10 +51,22 @@ def test_explicit_values_are_kept():
         work_type='LAB',
         work_number='№1',
         year=2026,
-        bottom_gap_lines=4,
+        gap_after_supervisor=5.0,
+        line_height_pt=20,
     )
     assert cfg.institution == 'University'
     assert cfg.work_type == 'LAB'
     assert cfg.work_number == '№1'
     assert cfg.year == 2026
-    assert cfg.bottom_gap_lines == 4
+    assert cfg.gap_after_supervisor == 5.0
+    assert cfg.line_height_pt == 20
+
+
+def test_gap_weights_can_be_disabled():
+    """Zeroing a weight removes the corresponding gap entirely."""
+    cfg = TitlePageConfig(
+        gap_after_header=0.0,
+        gap_after_supervisor=0.0,
+    )
+    assert cfg.gap_after_header == 0.0
+    assert cfg.gap_after_supervisor == 0.0
