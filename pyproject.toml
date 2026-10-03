@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docx-report-gen-title-page"
+version = "0.1.0"
+description = "Title page plugin for docx-report-gen"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "WarriorVortex", email = "" },
+]
+keywords = ["docx", "word", "report", "title page", "plugin", "docx-report-gen"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Office Suites",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "docx-report-gen>=0.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "mypy>=1.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/WarriorVortex/docx-report-gen-title-page"
+Repository = "https://github.com/WarriorVortex/docx-report-gen-title-page"
+Issues = "https://github.com/WarriorVortex/docx-report-gen-title-page/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+docx_report_gen_title_page = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["src/docx_report_gen_title_page"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+mypy_path = "src"
+files = ["src/docx_report_gen_title_page"]
+disallow_untyped_calls = false
