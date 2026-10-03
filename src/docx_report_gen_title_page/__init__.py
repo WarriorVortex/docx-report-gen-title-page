@@ -7,10 +7,12 @@ The plugin is attached to a Report via the standard plugin mechanism:
     from docx_report_gen_title_page import TitlePagePlugin
 
     r = Report(plugins=[TitlePagePlugin(
-        institution='...',
-        work_title='...',
-        student='...',
-        group='...',
+        institution='Санкт-Петербургский политехнический '
+                    'университет Петра Великого',
+        work_title='«Разложение сигналов в ряд Фурье»',
+        student='студент гр. 5130904/30103 Ерохин В.С.',
+        supervisor='Тутыгин В.С.',
+        city='Санкт-Петербург',
         year=2026,
     )])
     r.h1('Introduction')
@@ -26,6 +28,9 @@ which runs during Report.__init__ — before any user content.
 """
 from importlib.metadata import version, PackageNotFoundError
 
+from .config import TitlePageConfig
+from .plugin import TitlePagePlugin
+
 
 try:
     __version__ = version("docx-report-gen-title-page")
@@ -33,12 +38,4 @@ except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
 
-# Public API. The plugin class and its configuration dataclass will
-# be defined in dedicated modules and re-exported here.
-__all__: list[str] = []
-
-
-# TODO: implementation phase.
-#   from .plugin import TitlePagePlugin
-#   from .config import TitlePageConfig
-#   __all__ = ['TitlePagePlugin', 'TitlePageConfig']
+__all__ = ['TitlePagePlugin', 'TitlePageConfig']

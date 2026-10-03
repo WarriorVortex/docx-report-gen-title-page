@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-    { name = "WarriorVortex", email = "" },
+    { name = "WarriorVortex" },
 ]
 keywords = ["docx", "word", "report", "title page", "plugin", "docx-report-gen"]
 classifiers = [
