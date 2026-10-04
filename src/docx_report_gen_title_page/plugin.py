@@ -1,95 +1,74 @@
-"""TitlePagePlugin — adds title-page methods to a Report.
+"""TitlePagePlugin — adds a title_page() method to a Report.
 
-The plugin registers two block methods on every Report it is attached
-to:
+The plugin renders a title page from a TitlePageConfig. Loading an
+existing .docx as the base document is a feature of Report itself —
+use Report(source=...) instead of a plugin argument.
 
-    report.title_page(config=None, **kwargs)
-        Build a title page from fields. Accepts either a fully
-        constructed TitlePageConfig or keyword fields.
-
-    report.load_title_page(source, page_break=None)
-        Load an existing .docx file and append its content as-is,
-        preserving styles, sizes and spacing. Missing style
-        definitions are copied from the source; existing style IDs
-        in the target are kept as-is.
-
-Both methods return the report, so they chain with other block
-methods.
-
-Auto-render in setup():
-    If the plugin is constructed with `config=`, `source=`, or content
-    keyword fields, the page is rendered immediately in `setup()` —
-    before any user content. Constructing with no arguments registers
-    the methods and waits for an explicit call.
+Page break behavior: when the title page uses its own section (custom
+margins or isolate=True), the section break itself starts a new page.
+Otherwise, an inline break is appended to the last paragraph — no
+extra blank line at the bottom of the title page.
 """
-from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from docx_report_gen import Plugin, Report
 
-from ._render import render_config
+from ._render import (
+    _needs_section,
+    append_page_break_inline,
+    render_config,
+)
 from .config import TitlePageConfig
-from .loader import load_docx_content
-
-
-PathLike = Union[str, Path]
 
 
 class TitlePagePlugin(Plugin):
-    """Adds title_page() and load_title_page() methods to Report.
+    """Adds title_page() to Report.
 
-    Explicit usage:
+    Example:
+        from docx_report_gen import Report
+        from docx_report_gen_title_page import (
+            TitlePagePlugin, Student, Supervisor,
+        )
 
         r = Report(plugins=[TitlePagePlugin()])
         r.title_page(
             institution='СПбПУ',
+            work_type='ЛАБОРАТОРНАЯ РАБОТА',
+            work_number='№2',
             work_title='«...»',
-            student='студент гр. ... Ерохин В.С.',
-            supervisor='Тутыгин В.С.',
+            students=[Student('Ерохин В.С.', group='5130904/30103')],
+            supervisors=[Supervisor('Тутыгин В.С.', prefix='доцент')],
             city='Санкт-Петербург',
             year=2026,
         )
         r.h1('Введение')
 
-    Or:
+    Replaceable labels and custom margins:
 
-        r.load_title_page('Титульный лист.docx')
+        r.title_page(
+            students_label='Работу выполнил:',
+            supervisors_label='Научный руководитель:',
+            margin_top=2.5, margin_bottom=2.5,
+            margin_left=3.0, margin_right=1.5,
+            ...
+        )
 
-    Auto-render:
+    Combining with a source-based base document:
 
-        r = Report(plugins=[
-            TitlePagePlugin(institution='СПбПУ', year=2026),
-        ])
-        # Title page is already on the first sheet.
+        r = Report(source='Титульный лист.docx',
+                   plugins=[TitlePagePlugin()])
+        r.h1('Введение')
     """
 
     name = 'title-page'
 
     def __init__(
-            self,
-            config: Optional[TitlePageConfig] = None,
-            source: Optional[PathLike] = None,
-            page_break: bool = True,
-            **kwargs: Any,
+        self,
+        config: Optional[TitlePageConfig] = None,
+        page_break: bool = True,
+        isolate: bool = False,
+        **kwargs: Any,
     ) -> None:
-        """Initialize the plugin.
-
-        Args:
-            config: a fully constructed TitlePageConfig for auto-render.
-            source: path to an existing .docx title page for auto-render.
-                Mutually exclusive with `config` and content kwargs.
-            page_break: default for the page break after the title page.
-                Used by auto-render and by both methods when they are
-                called without an explicit override.
-            **kwargs: fields for TitlePageConfig, used when `config`
-                and `source` are both absent.
-
-        Raises:
-            ValueError: config and kwargs were both given; or source
-                and (config or kwargs) were both given.
-            FileNotFoundError: source path does not exist.
-            TypeError: an unknown content keyword was passed.
-        """
         super().__init__()
 
         if config is not None and kwargs:
@@ -97,48 +76,27 @@ class TitlePagePlugin(Plugin):
                 'Pass either config=... or **kwargs, not both'
             )
 
-        if source is not None and (config is not None or kwargs):
-            raise ValueError(
-                'Pass either source=..., or config=.../**kwargs, not both'
-            )
-
         self.page_break = page_break
-        self._initial_source: Optional[Path] = None
+        self.isolate = isolate
         self._initial_config: Optional[TitlePageConfig] = None
 
-        if source is not None:
-            path = Path(source)
-            if not path.exists():
-                raise FileNotFoundError(
-                    f'TitlePagePlugin(): source not found: {path}'
-                )
-            self._initial_source = path
-        elif config is not None or kwargs:
-            self._initial_config = (
-                config if config is not None else TitlePageConfig(**kwargs)
-            )
+        if config is not None:
+            self._initial_config = config
+        elif kwargs:
+            self._initial_config = TitlePageConfig(**kwargs)
 
     # ---------- Plugin hook ----------
 
     def setup(self, report: Report) -> None:
-        """Register block methods; auto-render if configured."""
-        # Plugin.setup() receives a report with a registry attached;
-        # registry is Optional on Plugin only to allow a plugin to be
-        # constructed without one. Here it is always set.
         registry = self.registry
         assert registry is not None, 'registry must be set during setup'
 
         registry.block('title_page', self._title_page_handler)
-        registry.block('load_title_page', self._load_title_page_handler)
 
-        if self._initial_source is not None:
-            self._load_title_page_handler(
-                report, self._initial_source, page_break=True,
-            )
-        elif self._initial_config is not None:
+        if self._initial_config is not None:
             self._title_page_handler(report, self._initial_config)
 
-    # ---------- block method handlers ----------
+    # ---------- handler ----------
 
     def _title_page_handler(
         self,
@@ -146,42 +104,27 @@ class TitlePagePlugin(Plugin):
         config: Optional[TitlePageConfig] = None,
         *,
         page_break: Optional[bool] = None,
+        isolate: Optional[bool] = None,
         **kwargs: Any,
     ) -> Report:
-        """Handler for Report.title_page(...).
-
-        Returns the report so calls can chain.
-        """
         if config is not None and kwargs:
             raise ValueError(
                 'title_page(): pass either a config object or keyword '
                 'fields, not both'
             )
-        cfg = (
-            config if config is not None
-            else TitlePageConfig(**kwargs)
-        )
+        cfg = config if config is not None else TitlePageConfig(**kwargs)
+
+        if isolate is not None:
+            cfg = TitlePageConfig(
+                **{**cfg.__dict__, 'isolate': isolate},
+            )
 
         render_config(report.doc, cfg)
 
-        pb = self.page_break if page_break is None else page_break
-        if pb:
-            report.page_break()
-        return report
-
-    def _load_title_page_handler(
-        self,
-        report: Report,
-        source: PathLike,
-        page_break: Optional[bool] = None,
-    ) -> Report:
-        """Handler for Report.load_title_page(...).
-
-        Returns the report so calls can chain.
-        """
-        load_docx_content(source, report.doc)
-
-        pb = self.page_break if page_break is None else page_break
-        if pb:
-            report.page_break()
+        # A section break (if any) already starts a new page. Only add
+        # an explicit page break when no section was created.
+        if not _needs_section(cfg):
+            pb = self.page_break if page_break is None else page_break
+            if pb:
+                append_page_break_inline(report.doc)
         return report
