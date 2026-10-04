@@ -1,30 +1,27 @@
 """Title page plugin for docx-report-gen.
 
-Inserts a standardized title page as the first element of a report.
-The plugin is attached to a Report via the standard plugin mechanism:
+Adds a `title_page()` method to a Report, rendering a formatted
+title page from fields. Optionally isolates the page in its own
+section (empty headers/footers), or adds a page break after it.
+
+To use an existing .docx as the base document, use the base package:
+
+    from docx_report_gen import Report
+    r = Report(source='Титульный лист.docx')
+    r.h1('Введение')
+
+Combine with the plugin:
 
     from docx_report_gen import Report
     from docx_report_gen_title_page import TitlePagePlugin
 
-    r = Report(plugins=[TitlePagePlugin(
-        institution='...',
-        work_title='...',
-        student='...',
-        group='...',
-        year=2026,
-    )])
-    r.h1('Introduction')
-    r.save('report.docx')
-
-Or globally, so every Report picks it up:
-
-    from docx_report_gen.writer import register_plugin
-    register_plugin(TitlePagePlugin(...))
-
-The plugin writes into the document in its `setup(report)` hook,
-which runs during Report.__init__ — before any user content.
+    r = Report(source='шаблон.docx', plugins=[TitlePagePlugin()])
+    r.h1('Введение')
 """
 from importlib.metadata import version, PackageNotFoundError
+
+from .config import Student, Supervisor, TitlePageConfig
+from .plugin import TitlePagePlugin
 
 
 try:
@@ -33,12 +30,9 @@ except PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
 
-# Public API. The plugin class and its configuration dataclass will
-# be defined in dedicated modules and re-exported here.
-__all__: list[str] = []
-
-
-# TODO: implementation phase.
-#   from .plugin import TitlePagePlugin
-#   from .config import TitlePageConfig
-#   __all__ = ['TitlePagePlugin', 'TitlePageConfig']
+__all__ = [
+    'TitlePagePlugin',
+    'TitlePageConfig',
+    'Student',
+    'Supervisor',
+]

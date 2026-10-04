@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docx-report-gen-title-page"
-version = "0.1.0"
+version = "0.1.2"
 description = "Title page plugin for docx-report-gen"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-    { name = "WarriorVortex", email = "" },
+    { name = "WarriorVortex" },
 ]
 keywords = ["docx", "word", "report", "title page", "plugin", "docx-report-gen"]
 classifiers = [
@@ -30,7 +30,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "docx-report-gen>=0.3.0",
+    "docx-report-gen>=0.3.2",
 ]
 
 [project.optional-dependencies]
@@ -68,7 +68,6 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.9"
 strict = true
 mypy_path = "src"
 files = ["src/docx_report_gen_title_page"]
